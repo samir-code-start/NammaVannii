@@ -90,7 +90,7 @@ if st.session_state.stage == "verify":
     # Play AI verification summary
     st.markdown(f"**AI Summary:** {data.get('normalized_issue', '—')}")
     st.caption(f"🌐 `{lang.upper()}` | 📊 `{data.get('confidence', 0):.0%}`")
-    if os.path.isfile(tts_path): st.audio(tts_path, autoplay=True)
+    if os.path.isfile(tts_path): st.audio(tts_path, autoplay=True, key="v_tts_main")
     
     # PHASE 0: Single-click mic initialization (browser security requirement)
     if not st.session_state._mic_initialized:
@@ -138,7 +138,7 @@ if st.session_state.stage == "verify":
             if "_rep_start" not in st.session_state:
                 st.session_state._rep_start = time.time()
                 st.info("🔊 Replay: Do I understand your problem? Reply now.")
-                if os.path.isfile(tts_path): st.audio(tts_path, autoplay=True)
+                if os.path.isfile(tts_path): st.audio(tts_path, autoplay=True, key="v_tts_replay")
                 
             elapsed_2 = time.time() - st.session_state._rep_start
             st.caption(f"⏳ Final response window: {max(0, int(3 - elapsed_2))}s")
