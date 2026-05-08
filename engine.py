@@ -705,8 +705,18 @@ def _sarvam_translate(text: str, source_lang: str, target_lang: str) -> str:
 # ===========================================================================
 
 def _sarvam_tts(text: str, lang: str) -> bytes | None:
-    """Call Sarvam TTS API (bulbul:v2). Returns audio bytes or None on failure."""
-    target_lang = SARVAM_TTS_LANG_MAP.get(lang.lower().strip(), "en-IN")
+    """
+    Call Sarvam TTS API (bulbul:v2). Kannada (kn) only — returns audio bytes or None on failure.
+
+    Key fix: Sarvam API requires `text` (str), NOT `inputs` (list).
+    Using `inputs` causes a 400 Bad Request error.
+    """
+    # Sarvam TTS is only used for Kannada — Hindi and English use Edge TTS directly
+    if lang.lower().strip() != "kn":
+        logger.info("[SARVAM TTS] Skipping — Sarvam TTS only used for Kannada (lang=%s).", lang)
+        return None
+
+    target_lang = SARVAM_TTS_LANG_MAP.get("kn", "kn-IN")  # Always kn-IN here
     try:
         res = requests.post(
             SARVAM_TTS_URL,
@@ -715,10 +725,11 @@ def _sarvam_tts(text: str, lang: str) -> bytes | None:
                 "api-subscription-key": SARVAM_API_KEY,
             },
             json={
-                "inputs": [text],
+                "text": text,                    # FIX: use "text" (str), NOT "inputs" (list)
                 "target_language_code": target_lang,
-                "speaker": "meera",
+                "speaker": "anushka",            # anushka is the default bulbul:v2 Kannada speaker
                 "model": "bulbul:v2",
+                "enable_preprocessing": True,    # Better handling of mixed-language text
             },
             timeout=20,
         )
@@ -735,7 +746,14 @@ def _sarvam_tts(text: str, lang: str) -> bytes | None:
 
 
 def generate_tts(text: str, lang: str) -> str:
-    """Synthesise verification prompt via Sarvam TTS (primary) or Edge TTS (fallback)."""
+    """
+    Synthesise verification prompt audio.
+
+    Routing logic:
+      - Kannada (kn): Sarvam TTS (primary) → Edge TTS (fallback if Sarvam fails)
+      - Hindi (hi):   Edge TTS directly (hi-IN-MadhurNeural)
+      - English (en): Edge TTS directly (en-IN-NeerjaNeural)
+    """
     output_path = f"/tmp/verify_{uuid.uuid4().hex}.mp3"
 
     if MOCK_MODE:
@@ -746,18 +764,6 @@ def generate_tts(text: str, lang: str) -> str:
 
     logger.info("TTS: lang=%s, chars=%d", lang, len(text))
 
-    # Try Sarvam TTS first (native Indian voices — preferred for Kannada/Hindi)
-    audio_bytes = _sarvam_tts(text, lang)
-    if audio_bytes:
-        with open(output_path, "wb") as f:
-            f.write(audio_bytes)
-        logger.info("[SARVAM TTS] Saved to %s", output_path)
-        return output_path
-
-    # Fallback to Edge TTS if Sarvam TTS fails
-    logger.info("[EDGE TTS FALLBACK] Sarvam TTS failed — switching to Edge TTS…")
-    voice = TTS_VOICE_MAP.get(lang.lower().strip(), TTS_FALLBACK_VOICE)
-    
     def run_async_tts(tts_text: str, tts_voice: str, path: str):
         new_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(new_loop)
@@ -765,6 +771,22 @@ def generate_tts(text: str, lang: str) -> str:
             new_loop.run_until_complete(_tts_coroutine(tts_text, tts_voice, path))
         finally:
             new_loop.close()
+
+    normalized_lang = lang.lower().strip()
+
+    # ── Kannada: try Sarvam TTS first, fall back to Edge TTS ────────────────
+    if normalized_lang == "kn":
+        audio_bytes = _sarvam_tts(text, normalized_lang)
+        if audio_bytes:
+            with open(output_path, "wb") as f:
+                f.write(audio_bytes)
+            logger.info("[SARVAM TTS] Saved to %s", output_path)
+            return output_path
+        logger.info("[EDGE TTS FALLBACK] Sarvam TTS failed for Kannada — switching to Edge TTS…")
+
+    # ── Hindi / English (or Kannada fallback): use Edge TTS directly ────────
+    voice = TTS_VOICE_MAP.get(normalized_lang, TTS_FALLBACK_VOICE)
+    logger.info("[EDGE TTS] Using voice=%s for lang=%s", voice, normalized_lang)
 
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
