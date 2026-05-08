@@ -809,27 +809,36 @@ def generate_tts(text: str, lang: str) -> str:
 
 def prepare_verification(ai_data: dict) -> None:
     """
-    Construct the full verification prompt in English, translate it to the citizen's language,
-    and generate TTS audio. Updates ai_data directly.
+    Construct the full verification prompt in English, translate it to the citizen's detected
+    language, and generate TTS audio in that same language. Updates ai_data directly.
+
+    Language routing:
+      - citizen spoke Kannada (kn) → translate to kn-IN → Sarvam TTS (kn-IN-VarunNeural fallback)
+      - citizen spoke Hindi    (hi) → translate to hi-IN → Edge TTS hi-IN-MadhurNeural
+      - citizen spoke English  (en) → no translation needed → Edge TTS en-IN-NeerjaNeural
     """
     base_prompt = ai_data.get("verification_prompt", "")
     normalized_issue = ai_data.get("normalized_issue", "")
-    citizen_lang = ai_data.get("language", "kn")
+    citizen_lang = ai_data.get("language", "kn")  # Language the citizen actually spoke
 
-    # Construct the full appended prompt in English
+    # Construct the full verification prompt in English first
     appended_prompt = f"{base_prompt} I heard you say '{normalized_issue}'. Is this correct? Say Yes or No."
     ai_data["verification_prompt_full_en"] = appended_prompt
 
-    tts_lang = citizen_lang if citizen_lang != "en" else "kn"
-    tts_text = appended_prompt
+    tts_text = appended_prompt  # Default: use English text if translation is skipped
 
-    if appended_prompt:
-        target_lang_code = SARVAM_TTS_LANG_MAP.get(tts_lang, "kn-IN")
+    if citizen_lang == "en":
+        # Citizen spoke English — no translation needed, play directly in English
+        ai_data["verification_prompt_translated"] = appended_prompt
+        tts_text = appended_prompt
+    else:
+        # Citizen spoke Kannada or Hindi — translate the prompt into their language
+        target_lang_code = SARVAM_TTS_LANG_MAP.get(citizen_lang, "kn-IN")
         translated_prompt = _sarvam_translate(appended_prompt, "en-IN", target_lang_code)
         ai_data["verification_prompt_translated"] = translated_prompt
         tts_text = translated_prompt
-        citizen_lang = tts_lang  # Ensure TTS uses Indic voice
 
+    # Generate TTS in the citizen's own language so they hear the confirmation in their tongue
     tts_path = generate_tts(tts_text, citizen_lang)
     ai_data["verify_tts_path"] = tts_path
 
